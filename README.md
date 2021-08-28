@@ -1,4 +1,4 @@
-# dnSpy - [Latest release](https://github.com/VNGhostMans/dnSpy/releases) (Support Vietnamese language)
+# dnSpy - [Latest release](https://github.com/VNGhostMans/dnSpyEx/releases) (Support Vietnamese language)
 
 dnSpy is a debugger and .NET assembly editor. You can use it to edit and debug assemblies even if you don't have any source code available. Main features:
 
@@ -14,12 +14,12 @@ See below for more features
 
 ## Binaries
 
-https://github.com/VNGhostMans/dnSpy/releases
+https://github.com/VNGhostMans/dnSpyEx/releases
 
 ## Building
 
 ```PS
-git clone --recursive https://github.com/VNGhostMans/dnSpy.git
+git clone --recursive https://github.com/VNGhostMans/dnSpyEx.git
 cd dnSpy
 # or dotnet build
 ./build.ps1 -NoMsbuild
