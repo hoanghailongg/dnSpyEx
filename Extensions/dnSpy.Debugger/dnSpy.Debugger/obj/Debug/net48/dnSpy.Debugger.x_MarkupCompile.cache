@@ -1,0 +1,20 @@
+﻿dnSpy.Debugger.x
+
+
+library
+C#
+.cs
+C:\Users\Tien Bao\Downloads\dnSpy-main\Extensions\dnSpy.Debugger\dnSpy.Debugger\obj\Debug\net48\
+dnSpy.Debugger
+none
+false
+TRACE;HAS_COMREFERENCE;DEBUG;NETFRAMEWORK;NET48;
+
+16-1795947296
+
+363466193915
+372068829559
+Breakpoints\Code\TextEditor\BreakpointGlyphPopupControl.xaml;Dialogs\AttachToProcess\AttachToProcessDlg.xaml;Dialogs\CodeBreakpoints\ShowCodeBreakpointSettingsDlg.xaml;Dialogs\DebugProgram\DebugProgramDlg.xaml;Evaluation\UI\VariablesWindowControl.xaml;Themes\wpf.styles.templates.xaml;ToolWindows\CallStack\CallStackControl.xaml;ToolWindows\CodeBreakpoints\CodeBreakpointsControl.xaml;ToolWindows\Exceptions\AddExceptionControl.xaml;ToolWindows\Exceptions\EditExceptionConditionsDlg.xaml;ToolWindows\Exceptions\ExceptionControl.xaml;ToolWindows\Memory\MemoryControl.xaml;ToolWindows\ModuleBreakpoints\ModuleBreakpointsControl.xaml;ToolWindows\Modules\ModulesControl.xaml;ToolWindows\Processes\ProcessesControl.xaml;ToolWindows\Threads\ThreadsControl.xaml;
+
+True
+

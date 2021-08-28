@@ -1,0 +1,20 @@
+﻿dnSpy.AsmEditor.x
+6.1.9.0
+
+library
+C#
+.cs
+C:\Users\Tien Bao\Downloads\dnSpy-main\Extensions\dnSpy.AsmEditor\obj\Debug\net48\
+dnSpy.AsmEditor
+none
+false
+TRACE;HAS_COMREFERENCE;DEBUG;NETFRAMEWORK;NET48;
+
+671886965769
+
+407-1944250384
+38919797073
+Assembly\AssemblyOptionsDlg.xaml;Compiler\EditCodeDlg.xaml;DnlibDialogs\CANamedArgumentControl.xaml;DnlibDialogs\CANamedArgumentsControl.xaml;DnlibDialogs\ConstantControl.xaml;DnlibDialogs\ConstantTypeControl.xaml;DnlibDialogs\ConstantTypeDlg.xaml;DnlibDialogs\CreateTypeSigArrayControl.xaml;DnlibDialogs\CreateTypeSigArrayDlg.xaml;DnlibDialogs\CustomAttributeControl.xaml;DnlibDialogs\CustomAttributeDlg.xaml;DnlibDialogs\CustomAttributesControl.xaml;DnlibDialogs\DeclSecuritiesControl.xaml;DnlibDialogs\DeclSecurityControl.xaml;DnlibDialogs\DeclSecurityDlg.xaml;DnlibDialogs\GenericParamControl.xaml;DnlibDialogs\GenericParamDlg.xaml;DnlibDialogs\GenericParamsControl.xaml;DnlibDialogs\ImplMapControl.xaml;DnlibDialogs\ListVMControl.xaml;DnlibDialogs\MarshalTypeControl.xaml;DnlibDialogs\MemberPickerDlg.xaml;DnlibDialogs\MemberRefControl.xaml;DnlibDialogs\MemberRefDlg.xaml;DnlibDialogs\MethodDefsControl.xaml;DnlibDialogs\MethodOverridesControl.xaml;DnlibDialogs\MethodSigCreatorControl.xaml;DnlibDialogs\MethodSigCreatorDlg.xaml;DnlibDialogs\MethodSpecControl.xaml;DnlibDialogs\MethodSpecDlg.xaml;DnlibDialogs\ParamDefControl.xaml;DnlibDialogs\ParamDefDlg.xaml;DnlibDialogs\ParamDefsControl.xaml;DnlibDialogs\SecurityAttributeControl.xaml;DnlibDialogs\SecurityAttributeDlg.xaml;DnlibDialogs\SecurityAttributesControl.xaml;DnlibDialogs\TypeDefOrRefAndCAControl.xaml;DnlibDialogs\TypeDefOrRefAndCADlg.xaml;DnlibDialogs\TypeDefOrRefAndCAsControl.xaml;DnlibDialogs\TypeSigCreatorControl.xaml;DnlibDialogs\TypeSigCreatorDlg.xaml;Event\EventOptionsDlg.xaml;Field\FieldOptionsDlg.xaml;Hex\Nodes\wpf.styles.templates.xaml;MethodBody\MethodBodyControl.xaml;MethodBody\MethodBodyDlg.xaml;MethodBody\SwitchOperandControl.xaml;MethodBody\SwitchOperandDlg.xaml;Method\MethodOptionsDlg.xaml;Module\ModuleOptionsDlg.xaml;Module\NetModuleOptionsDlg.xaml;Namespace\NamespaceDlg.xaml;Property\PropertyOptionsDlg.xaml;Resources\ImageListDlg.xaml;Resources\ImageListStreamerControl.xaml;Resources\ImageResourceElementControl.xaml;Resources\ImageResourceElementDlg.xaml;Resources\ResourceControl.xaml;Resources\ResourceDlg.xaml;Resources\ResourceElementControl.xaml;Resources\ResourceElementDlg.xaml;SaveModule\SaveHexOptionsDlg.xaml;SaveModule\SaveModuleOptionsDlg.xaml;SaveModule\SaveMultiModuleDlg.xaml;SaveModule\SaveSingleModuleDlg.xaml;Themes\wpf.styles.templates.xaml;Types\TypeOptionsDlg.xaml;
+
+True
+

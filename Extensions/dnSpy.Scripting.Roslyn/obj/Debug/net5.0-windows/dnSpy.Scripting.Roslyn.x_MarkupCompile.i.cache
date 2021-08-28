@@ -1,0 +1,20 @@
+﻿dnSpy.Scripting.Roslyn.x
+6.1.9.0
+
+library
+C#
+.cs
+C:\Users\Tien Bao\Downloads\dnSpy-main\Extensions\dnSpy.Scripting.Roslyn\obj\Debug\net5.0-windows\
+dnSpy.Scripting.Roslyn
+none
+false
+TRACE;HAS_COMREFERENCE;DEBUG;NET;NET5_0;NETCOREAPP
+
+11467301395
+
+33-320553388
+241-49843555
+Common\ScriptControl.xaml;
+
+False
+
