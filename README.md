@@ -21,8 +21,9 @@ https://github.com/VNGhostMans/dnSpyEx/releases
 ```PS
 git clone --recursive https://github.com/VNGhostMans/dnSpyEx.git
 cd dnSpy
-# or dotnet build
-./build.ps1 -NoMsbuild
+Run Terminal from VS:
+For x64: ./build.ps1 net-x64
+For x86: ./build.ps1 net-x86
 ```
 
 If you want to rebuild dnSpy, install .NET 5.0 at https://dotnet.microsoft.com/download/dotnet/5.0.
