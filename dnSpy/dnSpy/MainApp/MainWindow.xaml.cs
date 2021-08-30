@@ -17,6 +17,8 @@
     along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
 
+using System;
+using System.Windows;
 using System.Windows.Input;
 using dnSpy.Contracts.Controls;
 
@@ -28,4 +30,43 @@ namespace dnSpy.MainApp {
 			CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (s, e) => Close(), (s, e) => e.CanExecute = true));
 		}
 	}
+}
+
+		private protected override bool HandleHoriztonalScroll(IInputElement element, short delta) {
+			if (element is WpfTextView wpfTextView) {
+				if ((wpfTextView.Options.WordWrapStyle() & WordWrapStyles.WordWrap) == 0) {
+					var deltaDouble = (double)delta;
+					var currentViewport = wpfTextView.ViewportLeft;
+
+					bool isReverseScroll = deltaDouble < 0;
+
+					if (isReverseScroll) {
+						if (currentViewport > 0) {
+							if (currentViewport + deltaDouble < 0) {
+								deltaDouble = 0 - currentViewport;
+							}
+
+							wpfTextView.ViewScroller.ScrollViewportHorizontallyByPixels(deltaDouble);
+							return true;
+						}
+					}
+					else {
+						var maxScroll = Math.Max(currentViewport, wpfTextView.MaxTextRightCoordinate - wpfTextView.ViewportWidth + WpfTextViewConstants.EXTRA_HORIZONTAL_SCROLLBAR_WIDTH);
+						if (currentViewport < maxScroll) {
+							if (currentViewport + deltaDouble > maxScroll) {
+								deltaDouble = maxScroll - currentViewport;
+							}
+
+							wpfTextView.ViewScroller.ScrollViewportHorizontallyByPixels(deltaDouble);
+							return true;
+						}
+					}
+				}
+
+				return false;
+			}
+			return base.HandleHoriztonalScroll(element, delta);
+		}
+
+    }
 }
