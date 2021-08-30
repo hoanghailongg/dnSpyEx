@@ -19,8 +19,10 @@ https://github.com/VNGhostMans/dnSpyEx/releases
 ## Building
 
 ```PS
+# For .NET Framework Build:
 git clone --recursive https://github.com/VNGhostMans/dnSpyEx.git
 cd dnSpy
+# For .NET Build:
 Run Terminal from VS:
 For x64: ./build.ps1 net-x64
 For x86: ./build.ps1 net-x86
