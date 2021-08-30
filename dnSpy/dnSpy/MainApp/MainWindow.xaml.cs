@@ -12,7 +12,7 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
+	
     You should have received a copy of the GNU General Public License
     along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -21,6 +21,9 @@ using System;
 using System.Windows;
 using System.Windows.Input;
 using dnSpy.Contracts.Controls;
+using dnSpy.Text.Editor;
+using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.Text.Editor.OptionsExtensionMethods;
 
 namespace dnSpy.MainApp {
 	sealed partial class MainWindow : MetroWindow {
@@ -29,8 +32,6 @@ namespace dnSpy.MainApp {
 			contentPresenter.Content = content;
 			CommandBindings.Add(new CommandBinding(ApplicationCommands.Close, (s, e) => Close(), (s, e) => e.CanExecute = true));
 		}
-	}
-}
 
 		private protected override bool HandleHoriztonalScroll(IInputElement element, short delta) {
 			if (element is WpfTextView wpfTextView) {
@@ -67,6 +68,5 @@ namespace dnSpy.MainApp {
 			}
 			return base.HandleHoriztonalScroll(element, delta);
 		}
-
-    }
+	}
 }
