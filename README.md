@@ -106,3 +106,4 @@ dnSpy is licensed under [GPLv3](dnSpy/dnSpy/LicenseInfo/GPLv3.txt).
 
 # [Credits](dnSpy/dnSpy/LicenseInfo/CREDITS.txt)
 
+
