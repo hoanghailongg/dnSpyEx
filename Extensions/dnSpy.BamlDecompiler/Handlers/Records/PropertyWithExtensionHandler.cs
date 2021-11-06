@@ -1,16 +1,13 @@
 /*
 	Copyright (c) 2015 Ki
-
 	Permission is hereby granted, free of charge, to any person obtaining a copy
 	of this software and associated documentation files (the "Software"), to deal
 	in the Software without restriction, including without limitation the rights
 	to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 	copies of the Software, and to permit persons to whom the Software is
 	furnished to do so, subject to the following conditions:
-
 	The above copyright notice and this permission notice shall be included in
 	all copies or substantial portions of the Software.
-
 	THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 	IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 	FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
@@ -42,7 +39,12 @@ namespace dnSpy.BamlDecompiler.Handlers {
 			var ext = new XamlExtension(extType);
 			if (valTypeExt || extTypeId == (short)KnownTypes.TypeExtension) {
 				var value = ctx.ResolveType(record.ValueId);
-				ext.Initializer = new object[] { ctx.ToString(parent.Xaml, value) };
+
+				object[] initializer = new object[] { ctx.ToString(parent.Xaml, value) };
+				if (valTypeExt)
+					initializer = new object[] { new XamlExtension(ctx.ResolveType(0xfd4d)) { Initializer = initializer } }; // Known type - TypeExtension
+
+				ext.Initializer = initializer;
 			}
 			else if (extTypeId == (short)KnownTypes.TemplateBindingExtension) {
 				var value = ctx.ResolveProperty(record.ValueId);
@@ -85,7 +87,12 @@ namespace dnSpy.BamlDecompiler.Handlers {
 
 					attrName = ctx.ToString(parent.Xaml, xName);
 				}
-				ext.Initializer = new object[] { attrName };
+
+				object[] initializer = new object[] { attrName };
+				if (valStaticExt)
+					initializer = new object[] { new XamlExtension(ctx.ResolveType(0xfda6)) { Initializer = initializer } }; // Known type - StaticExtension
+
+				ext.Initializer = initializer;
 			}
 			else {
 				ext.Initializer = new object[] { XamlUtils.Escape(ctx.ResolveString(record.ValueId)) };
