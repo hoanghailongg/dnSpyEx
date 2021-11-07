@@ -12,7 +12,7 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
+	
     You should have received a copy of the GNU General Public License
     along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -254,6 +254,8 @@ namespace dnSpy.Debugger.DotNet.Mono.Impl.Evaluation {
 			var vm = engine.MonoVirtualMachine;
 			if (defaultType.IsPointer || defaultType.IsFunctionPointer) {
 				type = defaultType;
+				if (vm.Version.AtLeast(2, 46))
+					return new PointerValue(vm, GetType(type), value);
 				return new PrimitiveValue(vm, ElementType.Ptr, value);
 			}
 			else {
@@ -262,8 +264,14 @@ namespace dnSpy.Debugger.DotNet.Mono.Impl.Evaluation {
 				else
 					type = defaultType.AppDomain.System_IntPtr;
 				var monoType = GetType(type);
-				var monoValues = new Value[] { new PrimitiveValue(vm, ElementType.Ptr, value) };
-				return vm.CreateStructMirror(monoType, monoValues);
+
+				Value monoValue;
+				if (vm.Version.AtLeast(2, 46))
+					monoValue = new PointerValue(vm, GetType(type.AppDomain.System_Void.MakePointerType()), value);
+				else
+					monoValue = new PrimitiveValue(vm, ElementType.Ptr, value);
+
+				return vm.CreateStructMirror(monoType, new[] { monoValue });
 			}
 		}
 

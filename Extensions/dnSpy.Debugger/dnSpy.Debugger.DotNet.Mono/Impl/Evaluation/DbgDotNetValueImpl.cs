@@ -12,7 +12,7 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
+	
     You should have received a copy of the GNU General Public License
     along with dnSpy.  If not, see <http://www.gnu.org/licenses/>.
 */
@@ -57,6 +57,12 @@ namespace dnSpy.Debugger.DotNet.Mono.Impl.Evaluation {
 
 			var flags = ValueFlags.None;
 			if (value is PrimitiveValue pv && (pv.Value is null || ((Type.IsPointer || Type.IsFunctionPointer) && boxed0L.Equals(pv.Value)))) {
+				if (Type.IsByRef)
+					flags |= ValueFlags.IsNullByRef;
+				else
+					flags |= ValueFlags.IsNull;
+			}
+			else if (value is PointerValue ptr && (Type.IsPointer || Type.IsFunctionPointer) && ptr.Address == 0L) {
 				if (Type.IsByRef)
 					flags |= ValueFlags.IsNullByRef;
 				else
