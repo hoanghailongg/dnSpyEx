@@ -3,6 +3,10 @@ using System.Collections.Generic;
 using System.Text;
 using System.Reflection;
 
+#if ENABLE_CECIL
+using C = Mono.Cecil;
+#endif
+
 namespace Mono.Debugger.Soft
 {
 	public class FieldInfoMirror : Mirror {
@@ -13,12 +17,18 @@ namespace Mono.Debugger.Soft
 		FieldAttributes attrs;
 		CustomAttributeDataMirror[] cattrs;
 		bool inited;
+		int len_fixed_size_array;
+
+#if ENABLE_CECIL
+		C.FieldDefinition meta;
+#endif
 
 		public FieldInfoMirror (TypeMirror parent, long id, string name, TypeMirror type, FieldAttributes attrs) : base (parent.VirtualMachine, id) {
 			this.parent = parent;
 			this.name = name;
 			this.type = type;
 			this.attrs = attrs;
+			this.len_fixed_size_array = -1;
 			inited = true;
 		}
 
@@ -154,6 +164,28 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		public int FixedSize
+		{
+			get
+			{
+				if (len_fixed_size_array == -1) {
+					if (!vm.Version.AtLeast (2, 53) || !type.IsValueType) {
+						len_fixed_size_array = 0;
+					}
+					else {
+						var fbas = this.GetCustomAttributes (true);
+						for (int j = 0 ; j < fbas.Length; ++j) {
+							if (fbas [j].Constructor.DeclaringType.FullName.Equals("System.Runtime.CompilerServices.FixedBufferAttribute")){
+								len_fixed_size_array  = (int) fbas [j].ConstructorArguments[1].Value;
+								break;
+							}
+						}
+					}
+				}
+				return len_fixed_size_array;
+			}
+		}
+
 		public CustomAttributeDataMirror[] GetCustomAttributes (bool inherit) {
 			return GetCAttrs (null, inherit);
 		}
@@ -164,7 +196,33 @@ namespace Mono.Debugger.Soft
 			return GetCAttrs (attributeType, inherit);
 		}
 
+#if ENABLE_CECIL
+		public C.FieldDefinition Metadata {		
+			get {
+				if (parent.Metadata == null)
+					return null;
+				// FIXME: Speed this up
+				foreach (var fd in parent.Metadata.Fields) {
+					if (fd.Name == Name) {
+						meta = fd;
+						break;
+					}
+				}
+				if (meta == null)
+					/* Shouldn't happen */
+					throw new NotImplementedException ();
+				return meta;
+			}
+		}
+#endif
+
 		CustomAttributeDataMirror[] GetCAttrs (TypeMirror type, bool inherit) {
+
+#if ENABLE_CECIL
+			if (cattrs == null && Metadata != null && !Metadata.HasCustomAttributes)
+				cattrs = new CustomAttributeDataMirror [0];
+#endif
+
 			// FIXME: Handle inherit
 			if (cattrs == null) {
 				CattrInfo[] info = vm.conn.Type_GetFieldCustomAttributes (DeclaringType.Id, id, 0, false);

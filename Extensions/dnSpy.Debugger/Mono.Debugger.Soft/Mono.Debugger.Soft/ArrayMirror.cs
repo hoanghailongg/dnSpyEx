@@ -6,37 +6,28 @@ namespace Mono.Debugger.Soft
 {
 	public class ArrayMirror : ObjectMirror, IEnumerable {
 
-		int[] lengths;
-		int[] lower_bounds;
-		int rank;
-		int length;
+		public int[] lengths;
+		public int[] lower_bounds;
+		public int rank;
 
 		internal ArrayMirror (VirtualMachine vm, long id) : base (vm, id) {
-			length = -1;
 		}
 
 		internal ArrayMirror (VirtualMachine vm, long id, TypeMirror type, AppDomainMirror domain) : base (vm, id, type, domain) {
-			length = -1;
 		}
 
 		public int Length {
 			get {
-				if (length == -1)
-					InitializeLength ();
+				GetLengths ();
+
+				int length = lengths [0];
+
+				for (int i = 1; i < Rank; i++) {
+					length *= lengths [i];
+				}
 
 				return length;
 			}
-		}
-
-		void InitializeLength () {
-			GetLengths ();
-
-			int l = lengths [0];
-
-			for (int i = 1; i < Rank; i++) {
-				l *= lengths [i];
-			}
-			length = l;
 		}
 
 		public int Rank {
@@ -99,6 +90,14 @@ namespace Mono.Debugger.Soft
 			if (index < 0 || index > Length - values.Length)
 				throw new IndexOutOfRangeException ();
 			vm.conn.Array_SetValues (id, index, vm.EncodeValues (values));
+		}
+
+		public void SetByteValues (byte [] bytes)
+		{
+			if (bytes != null && bytes.Length != Length) {
+				throw new IndexOutOfRangeException ();
+			}
+			vm.conn.ByteArray_SetValues (id, bytes);
 		}
 
 		IEnumerator IEnumerable.GetEnumerator ()

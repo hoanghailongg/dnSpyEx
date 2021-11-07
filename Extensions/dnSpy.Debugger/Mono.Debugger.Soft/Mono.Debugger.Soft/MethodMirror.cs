@@ -4,6 +4,10 @@ using System.Linq;
 using System.Text;
 using System.Reflection;
 
+#if ENABLE_CECIL
+using C = Mono.Cecil;
+#endif
+
 namespace Mono.Debugger.Soft
 {
 	public class MethodMirror : Mirror
@@ -21,6 +25,10 @@ namespace Mono.Debugger.Soft
 		MethodBodyMirror body;
 		MethodMirror gmd;
 		TypeMirror[] type_args;
+
+#if ENABLE_CECIL
+		C.MethodDefinition meta;
+#endif
 
 		internal MethodMirror (VirtualMachine vm, long id) : base (vm, id) {
 		}
@@ -62,9 +70,10 @@ namespace Mono.Debugger.Soft
 				sb.Append(Name);
 				sb.Append(" ");
 				sb.Append("(");
-				for (var i = 0; i < param_info.Length; i++) {
-					sb.Append(param_info[i].ParameterType.Name);
-					if (i != param_info.Length - 1)
+				var parameters = GetParameters ();
+				for (var i = 0; i < parameters.Length; i++) {
+					sb.Append(parameters[i].ParameterType.Name);
+					if (i != parameters.Length - 1)
 						sb.Append(", ");
 				}
 				sb.Append(")");
@@ -90,6 +99,11 @@ namespace Mono.Debugger.Soft
 		}
 
 		CustomAttributeDataMirror[] GetCAttrs (TypeMirror type, bool inherit) {
+#if ENABLE_CECIL
+			if (cattrs == null && meta != null && !Metadata.HasCustomAttributes)
+				cattrs = new CustomAttributeDataMirror [0];
+#endif
+
 			// FIXME: Handle inherit
 			if (cattrs == null) {
 				CattrInfo[] info = vm.conn.Method_GetCustomAttributes (id, 0, false);
@@ -249,10 +263,16 @@ namespace Mono.Debugger.Soft
 					throw new AbsentInformationException ();
 				}
 
-				locals = new LocalVariable [li.names.Length];
+				// Add the arguments as well
+				var pi = GetParameters ();
+
+				locals = new LocalVariable [pi.Length + li.names.Length];
+
+				for (int i = 0; i < pi.Length; ++i)
+					locals [i] = new LocalVariable (vm, this, i, pi[i].ParameterType.Id, pi[i].Name, -1, -1, true);
 
 				for (int i = 0; i < li.names.Length; ++i)
-					locals [i] = new LocalVariable (vm, this, i, li.types [i], li.names [i], li.live_range_start [i], li.live_range_end [i], false);
+					locals [i + pi.Length] = new LocalVariable (vm, this, i, li.types [i], li.names [i], li.live_range_start [i], li.live_range_end [i], false);
 
 				if (vm.Version.AtLeast (2, 43)) {
 					scopes = new LocalScope [li.scopes_start.Length];
@@ -403,6 +423,32 @@ namespace Mono.Debugger.Soft
 			}
 
 			return null;
+		}
+
+#if ENABLE_CECIL
+		public C.MethodDefinition Metadata {
+			get {
+				if (meta == null)
+					meta = (C.MethodDefinition)DeclaringType.Assembly.Metadata.MainModule.LookupToken (MetadataToken);
+				return meta;
+			}
+		}
+#endif
+
+		//
+		// Evaluate the method on the client using an IL interpreter.
+		// Only supports a subset of IL instructions. Doesn't change
+		// debuggee state.
+		// Returns the result of the evaluation, or null for methods
+		// which return void.
+		// Throws a NotSupportedException if the method body contains
+		// unsupported IL instructions, or if evaluating the method
+		// would change debuggee state.
+		//
+		public Value Evaluate (Value this_val, Value[] args) {
+			var interp = new ILInterpreter (this);
+
+			return interp.Evaluate (this_val, args);
 		}
 	}
 }

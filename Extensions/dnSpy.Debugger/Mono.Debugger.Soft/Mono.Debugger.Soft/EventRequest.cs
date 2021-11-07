@@ -34,6 +34,11 @@ namespace Mono.Debugger.Soft
 			}
 		}
 
+		public int GetId()
+		{
+			return id;
+		}
+
 		public EventType EventType {
 			get {
 				return etype;
@@ -116,7 +121,9 @@ namespace Mono.Debugger.Soft
 			if (enabled) {
 				vm.conn.ClearEventRequest (etype, id);
 				enabled = false;
-				vm.RemoveRequest (this, id);
+				// FIXME: This causes problems because Events can still reference
+				// the old id
+				//vm.RemoveRequest (this, id);
 				id = -1;
 			}
 		}

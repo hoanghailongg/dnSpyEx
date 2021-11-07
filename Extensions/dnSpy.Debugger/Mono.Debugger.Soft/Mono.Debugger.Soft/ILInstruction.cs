@@ -4,6 +4,12 @@ using System.Text;
 using System.IO;
 using System.Reflection;
 
+#if ENABLE_CECIL
+using Mono.Cecil.Cil;
+#else
+using System.Reflection.Emit;
+#endif
+
 namespace Mono.Debugger.Soft
 {
 	/*

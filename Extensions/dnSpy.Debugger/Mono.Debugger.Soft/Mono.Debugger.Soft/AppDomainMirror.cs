@@ -8,6 +8,7 @@ namespace Mono.Debugger.Soft
 		string friendly_name;
 		AssemblyMirror entry_assembly, corlib;
 		AssemblyMirror[] assemblies;
+		bool assembliesCacheIsInvalid = true;
 		object assembliesCacheLocker = new object ();
 
 		internal AppDomainMirror (VirtualMachine vm, long id) : base (vm, id) {
@@ -22,12 +23,23 @@ namespace Mono.Debugger.Soft
 			}
 	    }
 
+		internal void InvalidateAssembliesCache () {
+			assembliesCacheIsInvalid = true;
+		}
+
 		public AssemblyMirror[] GetAssemblies () {
-			lock (assembliesCacheLocker) {
-				long[] ids = vm.conn.Domain_GetAssemblies (id);
-				assemblies = new AssemblyMirror [ids.Length];
-				for (int i = 0; i < ids.Length; ++i)
-					assemblies [i] = vm.GetAssembly (ids [i]);
+			if (assembliesCacheIsInvalid) {
+				lock (assembliesCacheLocker) {
+					if (assembliesCacheIsInvalid) {
+						long[] ids = vm.conn.Domain_GetAssemblies (id);
+						assemblies = new AssemblyMirror [ids.Length];
+						// FIXME: Uniqueness
+						for (int i = 0; i < ids.Length; ++i)
+							assemblies [i] = vm.GetAssembly (ids [i]);
+						Thread.MemoryBarrier ();
+						assembliesCacheIsInvalid = false;
+					}
+				}
 			}
 			return assemblies;
 		}
@@ -58,6 +70,14 @@ namespace Mono.Debugger.Soft
 				throw new ArgumentNullException ("s");
 
 			return vm.GetObject<StringMirror> (vm.conn.Domain_CreateString (id, s));
+		}
+
+		public ArrayMirror CreateByteArray (byte [] bytes) {
+			vm.CheckProtocolVersion (2, 52);
+			if (bytes == null)
+				throw new ArgumentNullException ("bytes");
+
+			return vm.GetObject<ArrayMirror> (vm.conn.Domain_CreateByteArray (id, bytes));
 		}
 
 		public ObjectMirror CreateBoxedValue (Value value) {

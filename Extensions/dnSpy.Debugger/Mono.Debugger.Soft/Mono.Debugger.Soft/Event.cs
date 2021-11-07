@@ -41,8 +41,10 @@ namespace Mono.Debugger.Soft
 			}
 	    }
 
-		public EventRequest TryGetRequest () {
-			return vm.TryGetRequest (req_id);
+		public EventRequest Request {
+			get {
+				return vm.GetRequest (req_id);
+			}
 		}
 	}
 }

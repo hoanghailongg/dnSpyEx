@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Net;
+using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
 using Mono.Cecil.Cil;
@@ -10,6 +11,7 @@ using Diag = System.Diagnostics;
 using System.Linq;
 using System.IO;
 using System.Security.Cryptography;
+using System.Threading.Tasks;
 
 using NUnit.Framework;
 
@@ -25,6 +27,9 @@ public class DebuggerTests
 	MethodMirror entry_point;
 	StepEventRequest step_req;
 	bool forceExit;
+#if MONODROID_TOOLS
+	Diag.Process adb;
+#endif
 
 	void AssertThrows<ExType> (Action del) where ExType : Exception {
 		bool thrown = false;
@@ -40,7 +45,12 @@ public class DebuggerTests
 	// No other way to pass arguments to the tests ?
 	public static bool listening = Environment.GetEnvironmentVariable ("DBG_SUSPEND") != null;
 	public static string runtime = Environment.GetEnvironmentVariable ("DBG_RUNTIME");
+	public static string runtime_args = Environment.GetEnvironmentVariable ("DBG_RUNTIME_ARGS");
 	public static string agent_args = Environment.GetEnvironmentVariable ("DBG_AGENT_ARGS");
+
+	public static string dtest_app_path = "dtest-app.exe";
+	public static string dtest_app_opt_path = "dtest-app-opt.exe";
+	public static string dtest_excfilter_path = "dtest-excfilter.exe";
 
 	// Not currently used, but can be useful when debugging individual tests.
 	void StackTraceDump (Event e)
@@ -59,37 +69,43 @@ public class DebuggerTests
 		return es [0];
 	}
 
-	void Start (params string[] args) {
-		Start (false, args);
-	}
-
-	Diag.ProcessStartInfo CreateStartInfo (string[] args) {
+#if !MONODROID_TOOLS
+	Diag.ProcessStartInfo CreateStartInfo (string app, string method = null, string runtimeParameters = null) {
 		var pi = new Diag.ProcessStartInfo ();
-
+		pi.RedirectStandardOutput = true;
+		pi.RedirectStandardError = true;
 		if (runtime != null) {
 			pi.FileName = runtime;
-		} else if (Path.DirectorySeparatorChar == '\\') {
+		} else {
 			string processExe = Diag.Process.GetCurrentProcess ().MainModule.FileName;
 			if (processExe != null) {
 				string fileName = Path.GetFileName (processExe);
-				if (fileName.StartsWith ("mono") && fileName.EndsWith (".exe"))
+				if (fileName.StartsWith ("mono"))
 					pi.FileName = processExe;
 			}
 		}
 		if (string.IsNullOrEmpty (pi.FileName))
-			pi.FileName = "mono";
-		pi.Arguments = String.Join (" ", args);
+			throw new ArgumentException ("Couldn't find mono runtime.");
+
+		// expect test .exe's to be next to this assembly
+		pi.Arguments = string.Join (" ", new string[] { runtime_args ?? "", runtimeParameters ?? "", Path.Combine (Path.GetDirectoryName (Assembly.GetExecutingAssembly ().Location), app), method ?? "" });
 		return pi;
 	}
+#endif
 
-	void Start (bool forceExit, params string[] args) {
+	void Start (string app, string method = null, bool forceExit = false) {
 		this.forceExit = forceExit;
 
+#if MONODROID_TOOLS
+		adb = Xamarin.AndroidRemoteRunner.Run ("debugger:" + app);
+#else
 		if (!listening) {
-			var pi = CreateStartInfo (args);
+			var pi = CreateStartInfo (app, method);
 			vm = VirtualMachineManager.Launch (pi, new LaunchOptions { AgentArgs = agent_args });
-		} else {
-			var ep = new IPEndPoint (IPAddress.Any, 10000);
+		} else
+#endif
+		{
+			var ep = new IPEndPoint (IPAddress.Any, 6100);
 			Console.WriteLine ("Listening on " + ep + "...");
 			vm = VirtualMachineManager.Listen (ep);
 		}
@@ -105,15 +121,15 @@ public class DebuggerTests
 		entry_point = null;
 		step_req = null;
 
-		Event e;
+		Event ev;
 
 		/* Find out the entry point */
 		while (true) {
-			e = GetNextEvent ();
+			ev = GetNextEvent ();
 
-			if (e is AssemblyLoadEvent) {
-				AssemblyLoadEvent ae = (AssemblyLoadEvent)e;
-				entry_point = ae.Assembly.EntryPoint;
+			if (ev is AssemblyLoadEvent) {
+				AssemblyLoadEvent aev = (AssemblyLoadEvent)ev;
+				entry_point = aev.Assembly.EntryPoint;
 				if (entry_point != null)
 					break;
 			}
@@ -122,6 +138,20 @@ public class DebuggerTests
 		}
 
 		load_req.Disable ();
+
+		if (method != null) {
+			var this_type = entry_point.DeclaringType;
+			var str = vm.RootDomain.CreateString (method);
+			var slot = this_type.GetField ("arg");
+
+			if (slot == null)
+				throw new Exception ("Missing slot");
+
+			if (str == null)
+				throw new Exception ("Bug in createstring");
+
+			this_type.SetValue (slot, str);
+		}
 	}
 
 	BreakpointEvent run_until (string name) {
@@ -324,6 +354,8 @@ public class DebuggerTests
 			Assert.AreEqual (expected, (val as StringMirror).Value);
 		} else if (val is StructMirror && (val as StructMirror).Type.Name == "IntPtr") {
 			AssertValue (expected, (val as StructMirror).Fields [0]);
+		} else if (val is PointerValue) {
+			Assert.AreEqual (expected, (val as PointerValue).Address);
 		} else {
 			Assert.IsTrue (val is PrimitiveValue);
 			Assert.AreEqual (expected, (val as PrimitiveValue).Value);
@@ -333,7 +365,10 @@ public class DebuggerTests
 	[SetUp]
 	public void SetUp () {
 		ThreadMirror.NativeTransitions = false;
-		Start (new string [] { "dtest-app.exe" });
+#if MONODROID_TOOLS
+		adb = null;
+#endif
+		Start (dtest_app_path);
 	}
 
 	[TearDown]
@@ -357,6 +392,14 @@ public class DebuggerTests
 			vm.Resume ();
 		}
 		vm = null;
+
+#if MONODROID_TOOLS
+		try {
+			adb?.WaitForExit ();
+		} catch (Exception e) {
+			Console.WriteLine (e);
+		}
+#endif
 	}
 
 	[Test]
@@ -399,6 +442,86 @@ public class DebuggerTests
 
 		Assert.IsTrue (es [1] is BreakpointEvent);
 		Assert.AreEqual (m.Name, (es [1] as BreakpointEvent).Method.Name);
+	}
+
+	[Test]
+	public void MetadataAndPdbTest () {
+		run_until ("bp1");
+		var assemblyMirrors = entry_point.DeclaringType.Assembly.Domain.GetAssemblies ();
+		Assert.IsTrue (assemblyMirrors.Length > 0);
+
+		foreach (var assemblyMirror in assemblyMirrors) {
+			assemblyMirror.GetMetadata ();
+			var metadata = assemblyMirror.Metadata;
+			Assert.AreEqual (metadata.MainModule.Mvid, assemblyMirror.ManifestModule.ModuleVersionId);
+
+			var location = assemblyMirror.Location;
+			if (!File.Exists (location))
+				continue;
+
+			Assert.IsFalse (assemblyMirror.IsDynamic);
+
+			var rawDataFromMemory = assemblyMirror.GetMetadataBlob ();
+			var rawDataFromDisk = File.ReadAllBytes (location);
+			Assert.IsTrue (rawDataFromMemory.SequenceEqual (rawDataFromDisk));
+
+			string pdbPath = Path.ChangeExtension (location, "pdb");
+			Assert.IsFalse (assemblyMirror.HasPdb);
+			Assert.IsFalse (assemblyMirror.HasFetchedPdb);
+			
+			var pdbFromMemory = assemblyMirror.GetPdbBlob ();
+			if (!File.Exists (pdbPath)) {
+				Assert.IsTrue (assemblyMirror.HasFetchedPdb);
+				continue;
+			}
+
+			Assert.IsTrue (pdbFromMemory != null && pdbFromMemory.Length > 0);
+			var pdbFromDisk = File.ReadAllBytes (pdbPath);
+			Assert.IsTrue (pdbFromMemory.SequenceEqual (pdbFromDisk));
+			
+			Assert.IsTrue (assemblyMirror.HasPdb);
+			Assert.IsTrue (assemblyMirror.HasFetchedPdb);
+
+			foreach (var type in metadata.Modules.SelectMany (x => x.GetTypes ())) {
+				var typeMirror = assemblyMirror.GetType (type.MetadataToken.ToUInt32 ());
+				Assert.AreEqual (type.Name, typeMirror.Name);
+				Assert.AreEqual (type.MetadataToken.ToInt32 (), typeMirror.MetadataToken);
+
+				int methodCount = 0;
+				foreach (var method in type.Methods) {
+					var methodMirror = assemblyMirror.GetMethod (method.MetadataToken.ToUInt32 ());
+					Assert.AreEqual (method.Name, methodMirror.Name);
+					Assert.AreEqual (method.MetadataToken.ToInt32 (), methodMirror.MetadataToken);
+					
+					if (methodCount++ > 10)
+						break;
+				}
+
+				if (type.IsNested)
+					break;
+			}
+		}
+	}
+	
+	[Test]
+	public void IsDynamicAssembly () {
+		vm.Detach ();
+
+		Start (dtest_app_path, "ref-emit-test");
+
+		run_until ("ref_emit_call");
+		var assemblyMirrors = entry_point.DeclaringType.Assembly.Domain.GetAssemblies ();
+		bool dynamicAssemblyFound = false;
+		foreach (var assemblyMirror in assemblyMirrors) {
+			if (assemblyMirror.GetName ().Name == "foo") {
+				dynamicAssemblyFound = true;
+				Assert.IsTrue (assemblyMirror.IsDynamic);
+			}
+			else
+				Assert.IsFalse (assemblyMirror.IsDynamic);
+		}
+
+		Assert.IsTrue (dynamicAssemblyFound);
 	}
 
 	[Test]
@@ -562,7 +685,7 @@ public class DebuggerTests
 	public void ClassLocalReflection () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "local-reflect" });
+		Start (dtest_app_path, "local-reflect");
 
 		MethodMirror m = entry_point.DeclaringType.Assembly.GetType ("LocalReflectClass").GetMethod ("RunMe");
 
@@ -1231,6 +1354,21 @@ public class DebuggerTests
 		val = frame.GetArgument (0);
 		AssertValue ("BLA", val);
 	}
+	[Test]
+	public void CreateByteArrays () {
+		byte[] bt = new byte[5];
+		bt[0] = 1;
+		bt[1] = 0;
+		bt[2] = 255;
+		bt[3] = 10;
+		bt[4] = 50;
+		var val =  vm.RootDomain.CreateByteArray (bt);
+		AssertValue (1, val [0]);
+		AssertValue (0, val [1]);
+		AssertValue (255, val [2]);
+		AssertValue (10, val [3]);
+		AssertValue (50, val [4]);
+	}
 
 	[Test]
 	public void Arrays () {
@@ -1493,16 +1631,16 @@ public class DebuggerTests
 		// nullables
 		field = o.Type.GetField ("field_nullable");
 		f = o.GetValue (field);
-		AssertValue (0, (f as StructMirror).Fields [0]);
-		AssertValue (false, (f as StructMirror).Fields [1]);
+		AssertValue (0, (f as StructMirror)["value"]);
+		AssertValue (false, (f as StructMirror)["hasValue"]);
 		o.SetValue (field, vm.CreateValue (6));
 		f = o.GetValue (field);
-		AssertValue (6, (f as StructMirror).Fields [0]);
-		AssertValue (true, (f as StructMirror).Fields [1]);
+		AssertValue (6, (f as StructMirror)["value"]);
+		AssertValue (true, (f as StructMirror)["hasValue"]);
 		o.SetValue (field, vm.CreateValue (null));
 		f = o.GetValue (field);
-		AssertValue (0, (f as StructMirror).Fields [0]);
-		AssertValue (false, (f as StructMirror).Fields [1]);
+		AssertValue (0, (f as StructMirror)["value"]);
+		AssertValue (false, (f as StructMirror)["hasValue"]);
 
 		// Argument checking
 		AssertThrows<ArgumentNullException> (delegate () {
@@ -1629,7 +1767,7 @@ public class DebuggerTests
 		t = frame.Method.GetParameters ()[7].ParameterType;
 		Assert.AreEqual ("Tests", t.Name);
 		var nested = (from nt in t.GetNestedTypes () where nt.IsNestedPublic select nt).ToArray ();
-		Assert.AreEqual (1, nested.Length);
+		Assert.AreEqual (2, nested.Length);
 		Assert.AreEqual ("NestedClass", nested [0].Name);
 		Assert.IsTrue (t.BaseType.IsAssignableFrom (t));
 		Assert.IsTrue (!t.IsAssignableFrom (t.BaseType));
@@ -1669,7 +1807,7 @@ public class DebuggerTests
 		t = frame.Method.GetParameters ()[7].ParameterType;
 
 		var props = t.GetProperties ();
-		Assert.AreEqual (3, props.Length);
+		Assert.AreEqual (4, props.Length);
 		foreach (PropertyInfoMirror prop in props) {
 			ParameterInfoMirror[] indexes = prop.GetIndexParameters ();
 
@@ -2034,11 +2172,24 @@ public class DebuggerTests
 		Assert.AreEqual (frame.Method.DeclaringType.Assembly, m.Assembly);
 		Assert.AreEqual (frame.Method.DeclaringType.Assembly.ManifestModule, m);
 
+		Assert.AreEqual ("{}\n", m.SourceLink.Replace ("\r\n", "\n"));
+
 		// This is no longer true on 4.0
 		//Assert.AreEqual ("Assembly", frame.Method.DeclaringType.Assembly.GetAssemblyObject ().Type.Name);
 
 		TypeMirror t = vm.RootDomain.Corlib.GetType ("System.Diagnostics.DebuggerDisplayAttribute");
 		Assert.AreEqual ("DebuggerDisplayAttribute", t.Name);
+
+		TypeMirror ba = m.Assembly.GetType ("BAttribute");
+		Assert.IsNotNull (ba);
+
+		var bs = m.Assembly.GetCustomAttributes (ba);
+		Assert.AreEqual (1, bs.Length);
+
+		var attrs = m.Assembly.GetCustomAttributes ();
+		Assert.IsTrue (attrs.Length >= 2); // compiler generated attributes
+		Assert.IsNotNull (attrs.Single (ca => ca.Constructor.DeclaringType.Name == "AAttribute"));
+		Assert.IsNotNull (attrs.Single (ca => ca.Constructor.DeclaringType.Name == "BAttribute"));
 	}
 
 	[Test]
@@ -2312,7 +2463,13 @@ public class DebuggerTests
 
 		Assert.AreEqual (5, (e as VMDeathEvent).ExitCode);
 
-		var p = vm.Process;
+		System.Diagnostics.Process p = null;
+
+		try {
+			p = vm.Process;
+		}
+		catch (Exception) {}
+
 		/* Could be a remote vm with no process */
 		if (p != null) {
 			p.WaitForExit ();
@@ -2328,6 +2485,60 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category("NotOnWindows")]
+	[Category ("AndroidSdksNotWorking")]
+	[Ignore("https://github.com/mono/mono/issues/20905")] // fails on Linux i386 on CI
+	public void Crash () {
+		string [] existingCrashFileEntries = Directory.GetFiles (".", "mono_crash*.json");
+
+		bool success = false;
+		for (int i = 0 ; i < 10; i++) {
+			try {
+				vm.Detach ();
+				Start (dtest_app_path, "crash-vm");
+				Event e = run_until ("crash");
+				while (!success) {
+					vm.Resume ();
+					e = GetNextEvent ();
+					var crash = e as CrashEvent;
+					if (crash == null)
+						continue;
+
+					success = true;
+					Assert.AreNotEqual (0, crash.Dump.Length);
+
+					break;
+				}
+			} catch (VMDisconnectedException vmDisconnect) { //expected behavior because of unreliability of the crash reporter.
+					success = false;
+			} finally {
+				try {
+					vm.Detach ();
+				} catch (VMDisconnectedException vmDisconnect) { //expected behavior because of unreliability of the crash reporter.
+					success = false;
+				} finally {
+					vm = null;
+				}
+			}
+			if (success) 
+				break;
+			//try again because of unreliability of the crash reporter.
+			TearDown();
+			SetUp();
+		}
+
+		// delete crash files created by this test
+		string [] crashFileEntries = Directory.GetFiles (".", "mono_crash*.json");
+		foreach (string f in crashFileEntries) {
+			if (!existingCrashFileEntries.Contains (f))
+				File.Delete(f);
+		}
+
+		if (!success)
+			Assert.Fail ("Didn't get crash event");
+	}
+
+	[Test]
 	public void Dispose () {
 		run_until ("Main");
 
@@ -2336,7 +2547,13 @@ public class DebuggerTests
 		var e = GetNextEvent ();
 		Assert.IsInstanceOfType (typeof (VMDisconnectEvent), e);
 
-		var p = vm.Process;
+		System.Diagnostics.Process p = null;
+
+		try {
+			p = vm.Process;
+		}
+		catch (Exception) {}
+
 		/* Could be a remote vm with no process */
 		if (p != null) {
 			p.WaitForExit ();
@@ -2451,7 +2668,7 @@ public class DebuggerTests
 	public void Suspend () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "suspend-test" });
+		Start (dtest_app_path, "suspend-test");
 
 		Event e = run_until ("suspend");
 
@@ -2592,8 +2809,8 @@ public class DebuggerTests
 		v = this_obj.InvokeMethod (e.Thread, m, null);
 		Assert.IsInstanceOfType (typeof (StructMirror), v);
 		var s = v as StructMirror;
-		AssertValue (42, s.Fields [0]);
-		AssertValue (true, s.Fields [1]);
+		AssertValue (42, s["value"]);
+		AssertValue (true, s["hasValue"]);
 
 		// pass nullable as this
 		//m = vm.RootDomain.Corlib.GetType ("System.Object").GetMethod ("ToString");
@@ -2610,8 +2827,8 @@ public class DebuggerTests
 		v = this_obj.InvokeMethod (e.Thread, m, null);
 		Assert.IsInstanceOfType (typeof (StructMirror), v);
 		s = v as StructMirror;
-		AssertValue (0, s.Fields [0]);
-		AssertValue (false, s.Fields [1]);
+		AssertValue (0, s["value"]);
+		AssertValue (false, s["hasValue"]);
 
 		// pass nullable as this
 		//m = vm.RootDomain.Corlib.GetType ("System.Object").GetMethod ("ToString");
@@ -2930,7 +3147,7 @@ public class DebuggerTests
 	public void InvokeSingleThreaded () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "invoke-single-threaded" });
+		Start (dtest_app_path, "invoke-single-threaded");
 
 		Event e = run_until ("invoke_single_threaded_2");
 
@@ -3011,7 +3228,7 @@ public class DebuggerTests
 	public void InvokeAbort () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "invoke-abort" });
+		Start (dtest_app_path, "invoke-abort");
 
 		Event e = run_until ("invoke_abort");
 
@@ -3035,6 +3252,7 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category("AndroidSdksNotWorking")]
 	public void Threads () {
 		Event e = run_until ("threads");
 
@@ -3057,7 +3275,8 @@ public class DebuggerTests
 
 		e = GetNextEvent ();
 		Assert.IsInstanceOfType (typeof (ThreadDeathEvent), e);
-		Assert.AreEqual (ThreadState.Stopped, e.Thread.ThreadState);
+		// https://github.com/mono/mono/issues/11416
+		// Assert.AreEqual (ThreadState.Stopped, e.Thread.ThreadState);
 	}
 
 	[Test]
@@ -3342,7 +3561,7 @@ public class DebuggerTests
 	public void ExceptionFilter2 () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-excfilter.exe" });
+		Start (dtest_excfilter_path);
 
 		MethodMirror filter_method = entry_point.DeclaringType.GetMethod ("Filter");
 		Assert.IsNotNull (filter_method);
@@ -3439,10 +3658,11 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category ("AndroidSdksNotWorking")]
 	public void MemberInOtherDomain () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "domain-test" });
+		Start (dtest_app_path, "domain-test");
 
 		vm.EnableEvents (EventType.AppDomainCreate, EventType.AppDomainUnload, EventType.AssemblyUnload);
 
@@ -3455,10 +3675,11 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category ("AndroidSdksNotWorking")]
 	public void Domains () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "domain-test" });
+		Start (dtest_app_path, "domain-test");
 
 		vm.EnableEvents (EventType.AppDomainCreate, EventType.AppDomainUnload, EventType.AssemblyUnload);
 
@@ -3507,6 +3728,10 @@ public class DebuggerTests
 		Assert.AreEqual ("invoke", frames [1].Method.Name);
 		Assert.AreEqual ("domains", frames [2].Method.Name);
 		Assert.AreEqual (vm.RootDomain, frames [2].Domain);
+
+		// Check enum creation in other domains
+		var anenum = vm.CreateEnumMirror (d_method.DeclaringType.Assembly.GetType ("AnEnum"), vm.CreateValue (1));
+		Assert.AreEqual (1, anenum.Value);
 
 		// Test breakpoints on already JITted methods in other domains
 		m = entry_point.DeclaringType.GetMethod ("invoke_in_domain_2");
@@ -3577,7 +3802,7 @@ public class DebuggerTests
 	public void RefEmit () {
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "ref-emit-test" });
+		Start (dtest_app_path, "ref-emit-test");
 
 		Event e = run_until ("ref_emit_call");
 
@@ -3613,7 +3838,7 @@ public class DebuggerTests
 		// Check that stack traces can be produced for threads in native code
 		vm.Detach ();
 
-		Start (new string [] { "dtest-app.exe", "frames-in-native" });
+		Start (dtest_app_path, "frames-in-native");
 
 		var e = run_until ("frames_in_native");
 
@@ -3804,6 +4029,7 @@ public class DebuggerTests
 
 	[Test]
 	[Category ("only88")]
+	[Category ("AndroidSdksNotWorking")]
 	public void TypeLoadSourceFileFilter () {
 		Event e = run_until ("type_load");
 
@@ -3825,6 +4051,7 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category ("AndroidSdksNotWorking")]
 	public void TypeLoadTypeNameFilter () {
 		Event e = run_until ("type_load");
 
@@ -3987,7 +4214,7 @@ public class DebuggerTests
 	public void UnhandledException () {
 		vm.Exit (0);
 
-		Start (new string [] { "dtest-app.exe", "unhandled-exception" });
+		Start (dtest_app_path, "unhandled-exception");
 
 		var req = vm.CreateExceptionRequest (null, false, true);
 		req.Enable ();
@@ -4006,7 +4233,7 @@ public class DebuggerTests
 	public void UnhandledException_2 () {
 		vm.Exit (0);
 
-		Start (new string [] { "dtest-app.exe", "unhandled-exception-endinvoke" });
+		Start (dtest_app_path, "unhandled-exception-endinvoke");
 
 		var req = vm.CreateExceptionRequest (null, false, true);
 		req.Enable ();
@@ -4030,7 +4257,7 @@ public class DebuggerTests
 		vm.Detach ();
 
 		// Exceptions caught in non-user code are treated as unhandled
-		Start (new string [] { "dtest-app.exe", "unhandled-exception-user" });
+		Start (dtest_app_path, "unhandled-exception-user");
 
 		var req = vm.CreateExceptionRequest (null, false, true);
 		req.AssemblyFilter = new List<AssemblyMirror> () { entry_point.DeclaringType.Assembly };
@@ -4043,6 +4270,41 @@ public class DebuggerTests
 		Assert.IsTrue (e2 is ExceptionEvent);
 
 		vm.Exit (0);
+		vm = null;
+	}
+
+	[Test]
+	public void UnhandledException3 () {
+		vm.Exit (0);
+
+		Start (dtest_app_path, "unhandled-exception-wrapper");
+
+		var req = vm.CreateExceptionRequest (null, false, true);
+		req.Enable ();
+
+		var e = run_until ("unhandled_exception_wrapper");
+		vm.Resume ();
+
+		var e2 = GetNextEvent ();
+		Assert.IsTrue (e2 is ExceptionEvent);
+		vm.Exit (0);
+		vm = null;
+	}
+
+	[Test]
+	public void UnhandledException4 () {
+		vm.Exit (0);
+
+		Start (dtest_app_path, "unhandled-exception-perform-wait-callback");
+
+		var req = vm.CreateExceptionRequest (null, false, true);
+		req.Enable ();
+
+		var e = run_until ("unhandled_exception_perform_wait_callback");
+		vm.Resume ();
+
+		var e2 = GetNextEvent ();
+		Assert.IsTrue (e2 is VMDeathEvent);
 		vm = null;
 	}
 
@@ -4069,6 +4331,7 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category ("AndroidSdksNotWorking")]
 	public void MakeGenericMethod () {
 		Event e = run_until ("bp1");
 
@@ -4101,7 +4364,7 @@ public class DebuggerTests
 	[Test]
 	public void InspectThreadSuspenedOnWaitOne () {
 		TearDown ();
-		Start (true, "dtest-app.exe", "wait-one" );
+		Start (dtest_app_path, "wait-one", forceExit: true);
 
 		ThreadMirror.NativeTransitions = true;
 
@@ -4215,6 +4478,39 @@ public class DebuggerTests
 	}
 
 	[Test]
+	public void SetIP2 () {
+		var bevent = run_until ("set_ip_1");
+
+		var invalid_loc = bevent.Thread.GetFrames ()[0].Location;
+
+		var req = create_step (bevent);
+		var e = step_out ();
+		req.Disable ();
+		var frames = e.Thread.GetFrames ();
+		var locs = frames [0].Method.Locations;
+
+		var next_loc = locs.First (l => (l.LineNumber == frames [0].Location.LineNumber + 3));
+
+		e.Thread.SetIP (next_loc);
+
+		Assert.AreEqual(next_loc.ILOffset, e.Thread.GetFrames ()[0].Location.ILOffset);
+		/* Check that i ++; j = 5; was skipped */
+		bevent = run_until ("set_ip_2");
+		var f = bevent.Thread.GetFrames ()[1];
+		AssertValue (2, f.GetValue (f.Method.GetLocal ("i")));
+		AssertValue (0, f.GetValue (f.Method.GetLocal ("j")));
+
+		// Error handling
+		AssertThrows<ArgumentNullException> (delegate {
+				e.Thread.SetIP (null);
+			});
+
+		AssertThrows<ArgumentException> (delegate {
+				e.Thread.SetIP (invalid_loc);
+			});
+	}
+
+	[Test]
 	public void SetIPSingleStep () {
 		// Check that single stepping after set-ip steps from the new ip
 		var bevent = run_until ("set_ip_1");
@@ -4271,9 +4567,10 @@ public class DebuggerTests
 	}
 
 	[Test]
+	[Category ("AndroidSdksNotWorking")]
 	public void ThreadpoolIOsinglestep () {
 		TearDown ();
-		Start ("dtest-app.exe", "threadpool-io");
+		Start (dtest_app_path, "threadpool-io");
 		// This is a regression test for #42625.  It tests the
 		// interaction (particularly in coop GC) of the
 		// threadpool I/O mechanism and the soft debugger.
@@ -4283,23 +4580,196 @@ public class DebuggerTests
 		e = run_until ("threadpool_bp");
 		var req = create_step (e);
 		e = step_out (); // leave threadpool_bp
+		
 		e = step_out (); // leave threadpool_io
 	}
 
 	[Test]
-	// Uses a fixed port
-	[Category("NotWorking")]
+	public void StepOutAsync () {
+		vm.Detach ();
+		Start (dtest_app_path, "step-out-void-async");
+		var e = run_until ("step_out_void_async_2");
+		create_step (e);
+		var e2 = step_out ();
+		assert_location (e2, "MoveNext");//we are in step_out_void_async
+		step_req.Disable ();
+		step_req.Depth = StepDepth.Out;
+		step_req.Enable ();
+		vm.Resume ();
+		var e3 = GetNextEvent ();
+		//after step-out from async void, execution should continue
+		//and runtime should Step
+		Assert.IsTrue (e3 is StepEvent, e3.GetType().FullName);
+		vm = null;
+	}
+
+	[Test]
+	public void StepOverOnExitFromArgsAfterStepInMethodParameter2() {
+		Event e = run_until ("ss_nested_with_three_args_wrapper");
+
+		var req = create_step(e);
+		req.Enable();
+
+		e = step_once();
+		assert_location(e, "ss_nested_with_three_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_with_three_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_with_three_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg3");
+	}
+
+	
+	[Test]
+	public void StepOverOnExitFromArgsAfterStepInMethodParameter3() {
+		Event e = run_until ("ss_nested_twice_with_two_args_wrapper");
+
+		var req = create_step(e);
+		req.Enable();
+
+		e = step_once();
+		assert_location(e, "ss_nested_twice_with_two_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg1");
+
+		e = step_over();
+		assert_location(e, "ss_nested_twice_with_two_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg2");
+
+		e = step_over();
+		assert_location(e, "ss_nested_twice_with_two_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg3");
+	}
+
+	[Test]
+	public void ShouldCorrectlyStepOverOnExitFromArgsAfterStepInMethodParameter() {
+		Event e = run_until ("ss_nested_with_two_args_wrapper");
+
+		var req = create_step(e);
+		req.Enable();
+
+		e = step_once();
+		assert_location(e, "ss_nested_with_two_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg");
+
+		e = step_over();
+		assert_location(e, "ss_nested_arg");
+
+		e = step_over();
+		assert_location(e, "ss_nested_with_two_args_wrapper");
+
+		e = step_into();
+		assert_location(e, "ss_nested_arg");
+	}
+
+	static int GetFreePort () {
+		var s = new Socket (AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+		s.Bind (new IPEndPoint (IPAddress.Loopback, 0));
+		var port = ((IPEndPoint)s.LocalEndPoint).Port;
+		s.Close ();
+		return port;
+	}
+
+	static VirtualMachine ConnectToPort (int port) {
+		var ep = new IPEndPoint (IPAddress.Loopback, port);
+		// Wait for the app to reach the Sleep () in attach ().
+		Thread.Sleep (1000);
+		return VirtualMachineManager.Connect (ep);
+	}
+
+	[Test]
+	public void InspectEnumeratorInGenericStruct() {
+		//files.myBucket.GetEnumerator().get_Current().Key watching this generates an exception in Debugger
+		Event e = run_until("inspect_enumerator_in_generic_struct");
+		var req = create_step(e);
+		req.Enable();
+		e = step_once();
+		e = step_over();
+		StackFrame frame = e.Thread.GetFrames () [0];
+		var ginst = frame.Method.GetLocal ("generic_struct");
+		Value variable = frame.GetValue (ginst);
+		StructMirror thisObj = (StructMirror)variable;
+		TypeMirror thisType = thisObj.Type;
+		variable = thisObj.InvokeMethod(e.Thread, thisType.GetMethod("get_Current"), null);
+		thisObj = (StructMirror)variable;
+		thisType = thisObj.Type;
+		AssertValue ("f1", thisObj["value"]);
+	}
+
+	[Test]
+	public void CheckElapsedTime() {
+		Event e = run_until ("elapsed_time");
+
+		var req = create_step(e);
+		req.Enable();
+		e = step_once();
+		e = step_over(); //Thread.Sleep(200)
+		Assert.IsTrue (e.Thread. ElapsedTime() >= 200);
+		e = step_over(); //Thread.Sleep(00);
+		Assert.IsTrue (e.Thread.ElapsedTime() < 200);
+		e = step_over(); //Thread.Sleep(100);
+		Assert.IsTrue (e.Thread.ElapsedTime() >= 100 && e.Thread. ElapsedTime() < 300);
+		e = step_over(); //Thread.Sleep(300);
+		Assert.IsTrue (e.Thread. ElapsedTime() >= 300);
+	}
+
+#if !MONODROID_TOOLS
+	[Test]
+	[Category("NotWorking")] // fails or hangs
 	public void Attach () {
 		vm.Exit (0);
 
 		// Launch the app using server=y,suspend=n
-		var pi = CreateStartInfo (new string[] { "--debugger-agent=transport=dt_socket,address=127.0.0.1:10000,server=y,suspend=n", "dtest-app.exe", "attach" });
+		var port = GetFreePort ();
+		var pi = CreateStartInfo (dtest_app_path, "attach", $"--debugger-agent=transport=dt_socket,address=127.0.0.1:{port},server=y,suspend=n");
+		pi.UseShellExecute = false;
 		var process = Diag.Process.Start (pi);
 
-		// Wait for the app to reach the Sleep () in attach ().
-		Thread.Sleep (1000);
-		var ep = new IPEndPoint (IPAddress.Loopback, 10000);
-		vm = VirtualMachineManager.Connect (ep);
+		vm = ConnectToPort (port);
 
 		var load_req = vm.CreateAssemblyLoadRequest ();
 		load_req.Enable ();
@@ -4347,6 +4817,7 @@ public class DebuggerTests
 		vm.Exit (0);
 		vm = null;
 	}
+#endif
 
 	[Test]
 	[Category("NotWorking")]
@@ -4361,6 +4832,555 @@ public class DebuggerTests
 		}
 	}
 
-}
+	[Test]
+	public void Bug59649 ()
+	{
+		Event e = run_until ("Bug59649");
 
-}
+		var req = create_step (e);
+		req.Filter = StepFilter.StaticCtor;
+		req.Enable ();
+
+		// Approach call instruction
+		e = step_once ();
+		//StackTraceDump (e);
+
+		// Follow call
+		e = step_into ();
+		//StackTraceDump (e);
+
+		e = step_into ();
+		//StackTraceDump (e);
+
+		// Is cctor in this bug, ends up in the static field constructor
+		// DummyCall
+		assert_location (e, "Call");
+	}
+
+	[Test]
+	public void Pointer_GetValue () {
+		var e = run_until ("pointer_arguments");
+		var frame = e.Thread.GetFrames () [0];
+
+		var param = frame.Method.GetParameters()[0];
+		Assert.AreEqual("Int32*", param.ParameterType.Name);
+
+		var pointerValue = frame.GetValue(param) as PointerValue;
+		Assert.AreEqual("Int32*", pointerValue.Type.Name);
+
+		AssertValue(1, pointerValue.Value);
+
+		var pointerValue2 = new PointerValue (pointerValue.VirtualMachine, pointerValue.Type, pointerValue.Address + pointerValue.Type.GetElementType().GetValueSize());
+
+		AssertValue(2, pointerValue2.Value);
+
+		param = frame.Method.GetParameters()[1];
+		Assert.AreEqual("BlittableStruct*", param.ParameterType.Name);
+
+		pointerValue = frame.GetValue(param) as PointerValue;
+		Assert.AreEqual("BlittableStruct*", pointerValue.Type.Name);
+
+		var structValue = pointerValue.Value as StructMirror;
+		Assert.AreEqual("BlittableStruct", structValue.Type.Name);
+
+		object f = structValue.Fields[0];
+		AssertValue (2, f);
+		f = structValue.Fields[1];
+		AssertValue (3.0, f);
+
+#if !__MonoCS__
+		// function pointers
+		param = frame.Method.GetParameters()[2];
+		pointerValue = frame.GetValue(param) as PointerValue;
+		Assert.AreEqual (0, pointerValue.Address);
+		frame.SetValue (param, new PointerValue (vm, param.ParameterType, 1));
+		pointerValue = frame.GetValue(param) as PointerValue;
+		Assert.AreEqual (1, pointerValue.Address);
+#endif
+	}
+
+	[Test]
+	public void InvokeGenericMethod () {
+		Event e = run_until ("bp1");
+		StackFrame frame = e.Thread.GetFrames()[0];
+		TypeMirror t = frame.Method.DeclaringType;
+		MethodMirror m;
+		m = t.GetMethod ("generic_method");
+		AssertThrows<ArgumentException> (delegate {
+				t.InvokeMethod (e.Thread, m, null);
+			});
+	}
+
+	[Test]
+	public void InvokeRefReturnMethod () {
+		Event e = run_until ("ref_return");
+		StackFrame frame = e.Thread.GetFrames()[0];
+		TypeMirror t = frame.Method.DeclaringType;
+		MethodMirror m;
+
+		m = t.GetMethod ("get_ref_int");
+		var v = t.InvokeMethod (e.Thread, m, null);
+		AssertValue (1, v);
+
+		m = t.GetMethod ("get_ref_string");
+		v = t.InvokeMethod (e.Thread, m, null);
+		AssertValue ("byref", v);
+
+		m = t.GetMethod ("get_ref_struct");
+		v = t.InvokeMethod (e.Thread, m, null);
+		Assert.IsTrue(v is StructMirror);
+
+		var mirror = (StructMirror)v;
+		AssertValue (1, mirror["i"]);
+		AssertValue (2.0, mirror["d"]);
+	}
+
+	[Test]
+	public void FieldWithUnsafeCastValue() {
+		Event e = run_until("field_with_unsafe_cast_value");
+		var req = create_step(e);
+		req.Enable();
+		e = step_once();
+		e = step_over();
+		e = step_over();
+		e = step_over();
+		e = step_over();
+		e = step_over();
+		var frame = e.Thread.GetFrames () [0];
+		var ginst = frame.Method.GetLocal ("bytes");
+		Value variable = frame.GetValue (ginst);
+		StructMirror thisObj = (StructMirror)variable;
+		TypeMirror thisType = thisObj.Type;
+		variable = thisObj.InvokeMethod(e.Thread, thisType.GetMethod("ToString"), null);
+		AssertValue ("abc", variable);
+
+	}
+	[Test]
+	public void IfPropertyStepping () {
+		Event e = run_until ("if_property_stepping");
+		var req = create_step (e);
+		req.Enable ();
+		e = step_once ();
+		e = step_over ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		e = step_into ();
+		Assert.IsTrue ((e as StepEvent).Method.Name == "op_Equality" || (e as StepEvent).Method.Name == "if_property_stepping");
+	}
+
+	[Test]
+	public void DebuggerBreakInFieldDoesNotHang () {
+		vm.EnableEvents (EventType.UserBreak);
+		Event e = run_until ("o1");
+
+		StackFrame frame = e.Thread.GetFrames () [0];
+		object val = frame.GetThis ();
+		Assert.IsTrue (val is ObjectMirror);
+		Assert.AreEqual ("Tests", (val as ObjectMirror).Type.Name);
+		ObjectMirror o = (val as ObjectMirror);
+		TypeMirror t = o.Type;
+
+		MethodMirror m = t.GetProperty ("BreakInField").GetGetMethod();
+		Value v = o.InvokeMethod (e.Thread, m, null, InvokeOptions.DisableBreakpoints);
+		AssertValue ("Foo", v);
+	}
+
+#if !MONODROID_TOOLS
+
+	void HandleEvents () {
+		string failMessage = null;
+		var alreadyStopped = false;
+		while (true) {
+			var nextEventSet = vm.GetNextEventSet (5000);
+			if (nextEventSet == null)
+				break;
+
+			foreach (var e in nextEventSet.Events) {
+				if (e.EventType == EventType.AssemblyLoad) {
+					var assemblyload = e as AssemblyLoadEvent;
+					var amirror = assemblyload.Assembly;
+					if (amirror.GetName ().Name.Contains ("dtest-app")) {
+						var methodMirror = amirror.EntryPoint.DeclaringType.GetMethod ("attach_break");
+						vm.SetBreakpoint (methodMirror, 0);
+					}
+				}
+
+				if (e.EventType == EventType.TypeLoad) {
+					Assert.Fail ("Unexpected TypeLoadEvent");
+				}
+
+				if (e.EventType == EventType.Breakpoint) {
+					var typeLoadRequest = vm.CreateTypeLoadRequest ();
+					typeLoadRequest.SourceFileFilter = new[] {"dtest-app.cs"};
+					typeLoadRequest.Enable ();
+
+					if (alreadyStopped) {
+						Assert.Fail ("Unexpected BreakpointEvent");
+					}
+
+					alreadyStopped = true;
+					continue;
+				}
+
+				try {
+					vm.Resume ();
+				}
+				catch (VMNotSuspendedException ex) {
+					failMessage = ex.Message;
+				}
+			}
+		}
+
+		if (failMessage != null)
+			Assert.Fail (failMessage);
+	}
+
+	void ShouldNotSendUnexpectedTypeLoadEventsAndInvalidSuspendPolicyAfterAttach (int port) {
+		string failMessage = null;
+		try {
+			vm = ConnectToPort (port);
+
+			vm.EnableEvents (EventType.AssemblyLoad, EventType.ThreadStart);
+			var vmstart = GetNextEvent ();
+			Assert.AreEqual (EventType.VMStart, vmstart.EventType);
+			try {
+				vm.Resume ();
+			}
+			catch (VMNotSuspendedException e)
+			{
+				failMessage = e.Message;
+			}
+			HandleEvents ();
+		}
+		catch (Exception ex) {
+			failMessage = ex.Message;
+		}
+		finally {
+			vm.Exit (0);
+			vm = null;
+		}
+		if (failMessage != null)
+			Assert.Fail (failMessage);
+	}
+
+	[Test]
+	public void ShouldNotSendUnexpectedTypeLoadEventsAndInvalidSuspendPolicyAfterAttachIfSuspendIsTrue() {
+		vm.Exit (0);
+		var port = GetFreePort ();
+
+		// Launch the app using server=y,suspend=y
+		var pi = CreateStartInfo (dtest_app_path, "attach", $"--debugger-agent=transport=dt_socket,address=127.0.0.1:{port},server=y,suspend=y");
+		pi.UseShellExecute = false;
+		var process = Diag.Process.Start (pi);
+
+		ShouldNotSendUnexpectedTypeLoadEventsAndInvalidSuspendPolicyAfterAttach (port);
+	}
+
+	[Test]
+	[Category("NotWorking")]
+	public void ShouldNotSendUnexpectedTypeLoadEventsAndInvalidSuspendPolicyAfterAttachIfSuspendIsFalse() {
+		vm.Exit (0);
+		var port = GetFreePort ();
+
+		// Launch the app using server=y,suspend=n
+		var pi = CreateStartInfo (dtest_app_path, "attach", $"--debugger-agent=transport=dt_socket,address=127.0.0.1:{port},server=y,suspend=n");
+		pi.UseShellExecute = false;
+		var process = Diag.Process.Start (pi);
+
+		ShouldNotSendUnexpectedTypeLoadEventsAndInvalidSuspendPolicyAfterAttach (port);
+	}
+
+	[Test]
+	public void InvokeMethodFixedArray () {
+		Event e = run_until ("fixed_size_array");
+		var req = create_step (e);
+		req.Enable ();
+		step_once ();
+		step_over ();
+		step_over ();
+		var bp = step_over ();
+		var thread = bp.Thread;
+		var frame = thread.GetFrames()[0];
+
+		var local =  frame.GetVisibleVariableByName("n");
+		var n = (StructMirror)frame.GetValue(local);
+		var get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer0");
+		var min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("1", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer1");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("2", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer2");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("3", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer3");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("4", min.Value);
+
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer2_0");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("a", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer2_1");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("b", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer2_2");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("c", min.Value);
+		get_Min = n.Type.GetMethods().First(m => m.Name == "getBuffer2_3");
+		min = (StringMirror) n.InvokeMethod(thread, get_Min, Array.Empty<Value>());
+		Assert.AreEqual("d", min.Value);
+	}
+
+	[Test]
+	public void TestExceptionFilterWin () {
+		Event e = run_until ("test_new_exception_filter1");
+		var req2 = vm.CreateExceptionRequest (vm.RootDomain.Corlib.GetType ("System.Exception"), true, true, false);
+		req2.Enable ();
+		vm.Resume ();
+		Event ev = GetNextEvent ();
+		var l = ev.Thread.GetFrames ()[0].Location;
+				
+		Assert.IsInstanceOfType (typeof (ExceptionEvent), ev);
+		req2.Disable ();
+		run_until ("test_new_exception_filter2");
+		req2 = vm.CreateExceptionRequest (null, true, true, false);
+		req2.Enable ();
+		vm.Resume ();
+		ev = GetNextEvent ();
+
+		Assert.IsInstanceOfType (typeof (ExceptionEvent), ev);
+		req2.Disable ();
+		run_until ("test_new_exception_filter3");
+		var req3 = vm.CreateExceptionRequest (vm.RootDomain.Corlib.GetType ("System.ArgumentException"), false, true, false);
+		req3.Enable ();
+		req2 = vm.CreateExceptionRequest (null, true, true, true);
+		req2.Enable ();
+		vm.Resume ();
+		ev = GetNextEvent ();
+
+		Assert.IsInstanceOfType (typeof (ExceptionEvent), ev);
+		req2.Disable ();
+		req3.Disable ();
+		run_until ("test_new_exception_filter4");
+		req2 = vm.CreateExceptionRequest (null, true, true, true);
+		req2.Enable ();
+		req2 = vm.CreateExceptionRequest (vm.RootDomain.Corlib.GetType ("System.ArgumentException"), false, true, false);
+		req2.Enable ();
+		vm.Resume ();
+		ev = GetNextEvent ();
+	}
+
+	[Test]
+	public void TestRuntimeInvokeHybridSuspendExceptions () {
+		TearDown ();
+		Start (dtest_app_path, "runtime_invoke_hybrid_exceptions", forceExit: true);
+		var req2 = vm.CreateExceptionRequest (null, false, true, false);
+		req2.Enable ();
+		vm.Resume ();
+		var ev = GetNextEvent ();
+		Assert.IsInstanceOfType (typeof (ExceptionEvent), ev);
+		vm.Exit (0);
+		vm = null;
+	}
+
+	[Test]
+	public void TestNewThreadHybridSuspendException () {
+		TearDown ();
+		Start (dtest_app_path, "new_thread_hybrid_exception", forceExit: true);
+		var req2 = vm.CreateExceptionRequest (null, false, true, false);
+		req2.Enable ();
+		vm.Resume ();
+		var ev = GetNextEvent ();
+		Assert.IsInstanceOfType (typeof (ExceptionEvent), ev);
+		vm.Exit (0);
+		vm = null;
+	}
+	
+	[Test]
+	public void TestAsyncDebugGenerics () {
+		Event e = run_until ("test_async_debug_generics");
+		e = step_in_await ("test_async_debug_generics", e);
+		e = step_in_await ("MoveNext", e);
+		e = step_in_await ("MoveNext", e);
+		e = step_in_await ("MoveNext", e);
+		e = step_in_await ("MoveNext", e);
+	}
+
+
+	[Test]
+	public void TestAsyncDebugGenericsValueType () {
+		vm.Detach();
+		Start(dtest_app_opt_path);
+		MethodMirror async_method = entry_point.DeclaringType.GetMethod("test_async_debug_generics");
+		Assert.IsNotNull(async_method);
+		vm.SetBreakpoint(async_method, 0);
+		vm.Resume();
+		var e = GetNextEvent();
+		Assert.AreEqual(EventType.Breakpoint, e.EventType);
+		e = step_in_await("MoveNext", e);
+		e = step_in_await("MoveNext", e);
+		e = step_in_await("MoveNext", e);
+		vm.Exit(0);
+		vm = null;
+	}
+
+
+	[Test]
+	public void InvalidPointer_GetValue () {
+		vm.Detach ();
+		Start (dtest_app_path, "pointer_arguments2");
+		Event e = run_until ("pointer_arguments2");
+		var frame = e.Thread.GetFrames () [0];
+
+		var param = frame.Method.GetParameters()[0];
+		Assert.AreEqual("Int32*", param.ParameterType.Name);
+
+		var pointerValue = frame.GetValue(param) as PointerValue;
+		Assert.AreEqual("Int32*", pointerValue.Type.Name);
+
+
+		var pointerValue2 = new PointerValue (pointerValue.VirtualMachine, pointerValue.Type, 200);
+
+		try {
+			var val = pointerValue2.Value;
+		}
+		catch (ArgumentException ex) {
+			Assert.IsInstanceOfType (typeof (ArgumentException), ex);
+		}
+	}
+  
+	[Test]
+	public void InvalidArgumentAssemblyGetType () {
+		Event e = run_until ("test_invalid_argument_assembly_get_type");
+		var assembly = entry_point.DeclaringType.Assembly;
+		try {
+			var type = assembly.GetType ("System.Collections.Generic.Dictionary<double, float>.Main");
+		}
+		catch (CommandException ex) {
+			Assert.AreEqual(ex.ErrorMessage, "Unexpected assembly-qualified type \"System.Collections.Generic.Dictionary<double, float>.Main\" was provided");
+		}
+	}
+  
+	[Test]
+	[Category("NotWorking")]
+	public void InvokeSingleStepMultiThread () {
+		vm.Detach ();
+		Start (dtest_app_path, "ss_multi_thread");
+		MethodMirror m = entry_point.DeclaringType.GetMethod ("mt_ss");
+		int firstLineFound = m.Locations [0].LineNumber + 1;
+		int line_first_counter = 5;
+		int line_second_counter = 5;
+		int line_third_counter = 3;
+		Event e = run_until ("ss_multi_thread");
+		EventRequest req = create_step (e);
+		req.Disable ();
+		ReusableBreakpoint breakpoint = new ReusableBreakpoint (this, "mt_ss");
+		breakpoint.Continue ();
+		e = breakpoint.lastEvent;
+		req = create_step (e);
+		while (line_first_counter > 0 || line_second_counter > 0 || line_third_counter > 0) {
+			var thread = e.Thread;
+			var l = thread.GetFrames ()[0].Location;
+			var frame = thread.GetFrames()[0];
+			
+			if (l.LineNumber == firstLineFound)
+				line_first_counter--;
+			if (l.LineNumber == firstLineFound + 1)
+				line_second_counter--;
+			if (l.LineNumber == firstLineFound + 2)
+				line_third_counter--;				
+
+			if (req.GetId() != breakpoint.req.GetId()) 
+				req.Disable ();
+			
+			req = create_step (e);
+			((StepEventRequest)req).Size = StepSize.Line;
+			try {
+				if ((e.Thread.GetFrames ()[0].Location.LineNumber == firstLineFound + 1 && (e.Thread.Name.Equals("Thread_0") || e.Thread.Name.Equals("Thread_1"))) || l.LineNumber == firstLineFound + 2) {
+					vm.Resume ();
+					e = GetNextEvent ();
+				}
+				else
+					e = step_over_or_breakpoint ();
+				req =  e.Request;		
+			}
+			catch (Exception z){
+				//expected vmdeath
+				break;
+			}
+		}
+		Assert.AreEqual(0, line_first_counter);
+		Assert.AreEqual(0, line_second_counter);
+		Assert.AreEqual(0, line_third_counter);
+		vm = null;
+	}
+	
+	[Test]
+	public void CheckSuspendPolicySentWhenLaunchSuspendYes () {
+		vm.Exit (0);
+		var port = GetFreePort ();
+
+		// Launch the app using server=y,suspend=y
+		var pi = CreateStartInfo (dtest_app_path, "attach", $"--debugger-agent=transport=dt_socket,address=127.0.0.1:{port},server=y,suspend=y");
+		pi.UseShellExecute = false;
+		var process = Diag.Process.Start (pi);
+
+		string failMessage = null;
+		try {
+			vm = ConnectToPort (port);
+
+			vm.EnableEvents (EventType.AssemblyLoad, EventType.ThreadStart);
+			var es =  vm.GetNextEventSet ();
+			Assert.AreEqual (es.SuspendPolicy, SuspendPolicy.All);
+			Assert.AreEqual (EventType.VMStart, es[0].EventType);
+		}
+		catch (Exception ex) {
+			failMessage = ex.Message;
+		}
+		finally {
+			vm.Exit (0);
+			vm = null;
+		}
+		if (failMessage != null)
+			Assert.Fail (failMessage);
+	}
+
+	[Test]
+	public void Frame_SetValue_WithList () {
+		Event e = run_until ("frame_setvalue_withlist");
+		var req = create_step (e);
+		req.Enable ();
+
+		e = step_once ();
+		e = step_over ();
+		e = step_over ();		
+		e = step_over ();				
+		e = step_over ();			
+		e = step_over ();				
+		e = step_over ();				
+			
+		StackFrame frame = e.Thread.GetFrames () [0];
+		var l = frame.Method.GetLocal ("someLocalString");
+		var l1 = frame.Method.GetLocal ("aList");
+		TypeMirror t = l1.Type;
+		var m = t.GetMethod ("get_Count");
+		var contentOrig1 =  frame.GetValue (l1);	
+		var v = (contentOrig1 as ObjectMirror).InvokeMethod (e.Thread, m, null);
+		var contentOrig =  frame.GetValue (l);					
+		var str = vm.RootDomain.CreateString ("test1");
+		frame.SetValue (l, str);
+		contentOrig =  frame.GetValue (l);		
+		e.Thread.GetFrames ();
+		contentOrig =  frame.GetValue (l);		
+		AssertValue ("test1", contentOrig);
+	}
+
+#endif
+} // class DebuggerTests
+} // namespace

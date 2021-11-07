@@ -22,16 +22,6 @@ namespace Mono.Debugger.Soft
 		internal ThreadMirror (VirtualMachine vm, long id, TypeMirror type, AppDomainMirror domain) : base (vm, id, type, domain) {
 		}
 
-		public override AppDomainMirror Domain {
-			get {
-				// Prevents hangs and crashes if it's an unpatched Unity mono.dll
-				if (!vm.HasMultipleDomains)
-					return base.Domain;
-				var frames = GetFrames ();
-				return frames.Length == 0 ? base.Domain : frames [0].Method?.DeclaringType.Assembly.Domain ?? base.Domain;
-			}
-		}
-
 		public StackFrame[] GetFrames () {
 			FetchFrames (true);
 			if (WaitHandle.WaitAny (new []{ vm.conn.DisconnectedEvent, fetchingEvent }) == 0) {
@@ -40,13 +30,19 @@ namespace Mono.Debugger.Soft
 			return frames;
 		}
 
+		public long ElapsedTime () {
+			vm.CheckProtocolVersion (2, 50);
+			long elapsedTime = GetElapsedTime ();
+			return elapsedTime;
+		}
+
 		internal void InvalidateFrames () {
 			cacheInvalid = true;
 			threadStateInvalid = true;
 		}
 
-		public void InvalidateName() {
-			name = null;
+		internal long GetElapsedTime () {
+			return vm.conn.Thread_GetElapsedTime (id);
 		}
 
 		internal void FetchFrames (bool mustFetch = false) {
@@ -167,11 +163,15 @@ namespace Mono.Debugger.Soft
 		 * for any other reason.
 		 * Since protocol version 29.
 		 */
-		public void SetIP (MethodMirror method, long il_offset) {
-			if (method == null)
-				throw new ArgumentNullException ("method");
+		public void SetIP (Location loc) {
+			if (loc == null)
+				throw new ArgumentNullException ("loc");
 			try {
-				vm.conn.Thread_SetIP (id, method.Id, il_offset);
+				vm.conn.Thread_SetIP (id, loc.Method.Id, loc.ILOffset);
+				if (vm.conn.Version.AtLeast(2, 52)) {
+					InvalidateFrames();
+					FetchFrames(true);
+				}
 			} catch (CommandException ex) {
 				if (ex.ErrorCode == ErrorCode.INVALID_ARGUMENT)
 					throw new ArgumentException ("loc doesn't refer to a location in the current method of this thread.", "loc");

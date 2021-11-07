@@ -39,11 +39,14 @@ namespace Mono.Debugger.Soft
 					if (vm.Version.AtLeast (2, 38)) {
 						try {
 							domain = vm.GetDomain (vm.conn.StackFrame_GetDomain (thread.Id, Id));
+						} catch (InvalidStackFrameException) {
+							domain = Thread.Domain;
 						} catch (AbsentInformationException) {
+							domain = Thread.Domain;
 						}
+					} else {
+						domain = Thread.Domain;
 					}
-					if (domain == null)
-						domain = method.DeclaringType.Assembly.Domain;
 				}
 
 				return domain;
@@ -85,12 +88,8 @@ namespace Mono.Debugger.Soft
 
 		public int ILOffset {
 			get {
-				return il_offset;
+				return Location.ILOffset;
 			}
-		}
-
-		public void SetILOffset (int new_il_offset) {
-			il_offset = new_il_offset;
 		}
 
 		public int LineNumber {

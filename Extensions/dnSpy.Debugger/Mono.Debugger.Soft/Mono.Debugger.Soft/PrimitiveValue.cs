@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 
 namespace Mono.Debugger.Soft
 {
@@ -8,17 +9,9 @@ namespace Mono.Debugger.Soft
 	 */
 	public class PrimitiveValue : Value {
 		object value;
-		ElementType etype;
 
-		public PrimitiveValue (VirtualMachine vm, ElementType etype, object value) : base (vm, 0) {
-			this.etype = etype;
+		public PrimitiveValue (VirtualMachine vm, object value) : base (vm, 0) {
 			this.value = value;
-		}
-
-		public ElementType Type {
-			get {
-				return etype;
-			}
 		}
 
 		public object Value {
@@ -46,6 +39,34 @@ namespace Mono.Debugger.Soft
 			object v = Value;
 
 			return "PrimitiveValue<" + (v != null ? v.ToString () : "(null)") + ">";
+		}
+
+		public Value InvokeMethod (ThreadMirror thread, MethodMirror method, IList<Value> arguments) {
+			return ObjectMirror.InvokeMethod (vm, thread, method, this, arguments, InvokeOptions.None);
+		}
+
+		public Value InvokeMethod (ThreadMirror thread, MethodMirror method, IList<Value> arguments, InvokeOptions options) {
+			return ObjectMirror.InvokeMethod (vm, thread, method, this, arguments, options);
+		}
+
+		public IAsyncResult BeginInvokeMethod (ThreadMirror thread, MethodMirror method, IList<Value> arguments, InvokeOptions options, AsyncCallback callback, object state) {
+			return ObjectMirror.BeginInvokeMethod (vm, thread, method, this, arguments, options, callback, state);
+		}
+
+		public Value EndInvokeMethod (IAsyncResult asyncResult) {
+			return ObjectMirror.EndInvokeMethodInternal (asyncResult);
+		}
+
+		public InvokeResult EndInvokeMethodWithResult (IAsyncResult asyncResult) {
+			return ObjectMirror.EndInvokeMethodInternalWithResult (asyncResult);
+		}
+
+		public Task<Value> InvokeMethodAsync (ThreadMirror thread, MethodMirror method, IList<Value> arguments, InvokeOptions options = InvokeOptions.None) {
+			return ObjectMirror.InvokeMethodAsync (vm, thread, method, this, arguments, options);
+		}
+
+		public Task<InvokeResult> InvokeMethodAsyncWithResult (ThreadMirror thread, MethodMirror method, IList<Value> arguments, InvokeOptions options = InvokeOptions.None) {
+			return ObjectMirror.InvokeMethodAsyncWithResult (vm, thread, method, this, arguments, options);
 		}
 	}
 }

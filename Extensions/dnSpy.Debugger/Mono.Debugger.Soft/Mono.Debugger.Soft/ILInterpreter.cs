@@ -1,5 +1,11 @@
 using System;
 
+#if ENABLE_CECIL
+using Mono.Cecil.Cil;
+#else
+using System.Reflection.Emit;
+#endif
+
 namespace Mono.Debugger.Soft
 {
 	internal class ILInterpreter
